@@ -1,33 +1,56 @@
 import os
 import re
-from collections import defaultdict, Counter
 import pymorphy2
+import nltk
+from collections import defaultdict
+from nltk.stem import WordNetLemmatizer
 
+nltk.download("wordnet")
+nltk.download("omw-1.4")
+
+# Инициализация
 morph = pymorphy2.MorphAnalyzer()
+lemmatizer = WordNetLemmatizer()
 
 # Папка с текстовыми файлами статей
 ARTICLES_FOLDER = "downloaded_pages"
 
-# Русские стоп-слова
-STOPWORDS = {"и", "в", "во", "на", "с", "по", "за", "от", "до", "у", "о", "а", "но", "же", "что", "как", "бы", "это"}
+# Папки для сохранения результатов
+TOKENS_FOLDER = "tokens"
+LEMMAS_FOLDER = "lemmas"
 
-# Функция очистки текста от HTML-тегов
+# Создаём папки
+os.makedirs(TOKENS_FOLDER, exist_ok=True)
+os.makedirs(LEMMAS_FOLDER, exist_ok=True)
+
+# Русские и английские слова (союзы, предлоги + слова из кода)
+STOPWORDS = {
+    "и", "в", "во", "на", "с", "по", "за", "от", "до", "у", "о", "а", "но", "же", "что", "как", "бы", "это",
+    "the", "a", "an", "and", "or", "but", "if", "then", "else", "because", "so", "than", "after", "before",
+    "of", "at", "in", "on", "by", "with", "about", "against", "between", "into", "through", "during",
+    "before", "after", "above", "below", "to", "from", "up", "down", "under", "over", "again", "further",
+    "function", "return", "var", "let", "const", "document", "window", "onclick", "getelementbyid",
+    "getelementsbytagname", "script", "google", "console", "log", "alert", "addeventlistener"
+}
+
+# Функция очистки текста от HTML и JS-кода
 def clean_text(text):
     text = re.sub(r"<[^>]+>", " ", text)  # Убираем HTML-теги
+    text = re.sub(r"(?i)\b(function|var|let|const|return|document|window|onclick|script|console|log|alert)\b", " ", text)  # Убираем JS-код
     text = re.sub(r"[^\w\s]", " ", text)  # Убираем пунктуацию
     text = re.sub(r"\d+", "", text)  # Убираем числа
     text = text.lower().strip()  # Приводим к нижнему регистру и удаляем пробелы
     return text
 
-# Функция фильтрации мусорных токенов
+# Функция фильтрации токенов
 def is_valid_token(token):
     if len(token) > 20:
         return False
-    if len(token) == 1:  # Однобуквенные слова (и русские, и английские)
+    if len(token) == 1:  # Однобуквенные слова
         return False
     if "_" in token:  # Слова с нижним подчеркиванием
         return False
-    if re.search(r"(.)\1{4,}", token):
+    if re.search(r"(.)\1{4,}", token):  # Повторяющиеся символы
         return False
     if "amp" in token or "lt" in token or "gt" in token:
         return False
@@ -36,47 +59,47 @@ def is_valid_token(token):
 # Функция для токенизации текста
 def tokenize(text):
     words = text.split()
-    words = [word for word in words if word not in STOPWORDS and is_valid_token(word)]  # Убираем стоп-слова и мусор
+    words = [word for word in words if word not in STOPWORDS and is_valid_token(word)]  # Фильтрация
     return set(words)  # Убираем дубликаты
 
+# Функция определения языка слова
+def is_russian(word):
+    return re.match(r"^[а-яё]+$", word) is not None  # Проверяем, содержит ли слово только русские буквы
 
+# Функция лемматизации для русского и английского языка
 def lemmatize(word):
-    parsed = morph.parse(word)[0]
-    lemma = parsed.normal_form  # Основная форма слова
-    lang = "ru" if "LATN" not in parsed.tag else "en"  # Определение языка (русский/английский)
-    return lemma, lang
+    if is_russian(word):
+        return morph.parse(word)[0].normal_form  # Лемматизация русского слова
+    else:
+        return lemmatizer.lemmatize(word)  # Лемматизация английского слова
 
-# Читаем статьи и собираем токены
-all_tokens = set()
-lemma_dict = defaultdict(set)
-lemma_counter = Counter()
-
+# Читаем статьи и обрабатываем их по отдельности
 for filename in os.listdir(ARTICLES_FOLDER):
     if filename.endswith(".txt"):
-        with open(os.path.join(ARTICLES_FOLDER, filename), "r", encoding="utf-8") as file:
+        file_path = os.path.join(ARTICLES_FOLDER, filename)
+
+        with open(file_path, "r", encoding="utf-8") as file:
             text = file.read()
             text = clean_text(text)
             tokens = tokenize(text)
-            all_tokens.update(tokens)
+
+            # Группируем токены по леммам
+            lemma_dict = defaultdict(set)
             for token in tokens:
-                lemma, lang = lemmatize(token)
-                lemma_dict[(lemma, lang)].add(token)
-                lemma_counter[(lemma, lang)] += 1
+                lemma = lemmatize(token)
+                lemma_dict[lemma].add(token)
 
-# Фильтруем леммы:
-filtered_lemmas = {
-    lemma: words
-    for (lemma, lang), words in lemma_dict.items()
-    if len(words) > 1 or lemma_counter[(lemma, lang)] > 1  # Если более 1 формы или слово встречается >1 раза
-}
+        # Пути для сохранения файлов
+        tokens_path = os.path.join(TOKENS_FOLDER, f"tokens_{filename}")
+        lemmas_path = os.path.join(LEMMAS_FOLDER, f"lemmas_{filename}")
 
-# Сохраняем токены в файл
-with open("tokens.txt", "w", encoding="utf-8") as file:
-    file.write("\n".join(sorted(all_tokens)))
+        # Сохраняем токены
+        with open(tokens_path, "w", encoding="utf-8") as token_file:
+            token_file.write("\n".join(sorted(tokens)))
 
-# Сохраняем леммы в файл
-with open("lemmas.txt", "w", encoding="utf-8") as file:
-    for lemma, words in sorted(filtered_lemmas.items()):
-        file.write(f"{lemma}: {', '.join(sorted(words))}\n")
+        # Сохраняем леммы в нужном формате
+        with open(lemmas_path, "w", encoding="utf-8") as lemma_file:
+            for lemma, token_set in sorted(lemma_dict.items()):
+                lemma_file.write(f"{lemma} {' '.join(sorted(token_set))}\n")
 
-print("Токены и леммы сохранены!")
+print("Все файлы обработаны!")
