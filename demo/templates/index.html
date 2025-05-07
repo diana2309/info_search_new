@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Поисковая система</title>
+</head>
+<body>
+    <h1>Поиск по документам</h1>
+    <form method="post">
+        <input type="text" name="query" placeholder="Введите запрос" value="{{ query }}">
+        <button type="submit">Поиск</button>
+    </form>
+    <h2>Результаты:</h2>
+    {% if results %}
+        <ol>
+        {% for filename, score in results %}
+            <li>{{ filename }} — Релевантность: {{ "%.4f"|format(score) }}</li>
+        {% endfor %}
+        </ol>
+    {% else %}
+        {% if query %}
+            <p>Ничего не найдено.</p>
+        {% endif %}
+    {% endif %}
+</body>
+</html>
